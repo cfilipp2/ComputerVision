@@ -28,7 +28,6 @@ from typing import Tuple, List, Optional
 @dataclass
 class Config:
     """Configuration parameters for the analysis"""
-    SHOW_PLOT: bool = True
     MAX_AREA_POINTDEFECTS_NM2: float = 40 * 40  # nm²
     MIN_AREA_POINTDEFECTS_NM2: float = 20 * 20  # nm²
     NOISE_FLOOR: float = 130e-12  # pA
