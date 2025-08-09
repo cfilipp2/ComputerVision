@@ -352,9 +352,154 @@ def process_multiple_samples(filepaths: List[str]) -> List[dict]:
     
     return all_results
 
+def add_scale_bar(ax, nm_per_pixel: float, length_nm: int = 500) -> None:
+    """Add scale bar to image"""
+    length_px = int(length_nm / nm_per_pixel)
+    scalebar = AnchoredSizeBar(ax.transData, 
+                               size=length_px,
+                               label=f"{length_nm} nm", 
+                               loc='lower right', 
+                               pad=0.1, 
+                               color='white', 
+                               frameon=False, 
+                               size_vertical=2,
+                               fontproperties=fm.FontProperties(size=10))
+    ax.add_artist(scalebar)
+
+
+def create_combined_overlay(gray_image: np.ndarray, 
+                           edge_image: np.ndarray, 
+                           defect_image: np.ndarray) -> np.ndarray:
+    """
+    Combine original image with edge and defect overlays
+    - Extended defects (edges) shown from edge_image
+    - Point defects shown from defect_image
+    """
+    # Start with the grayscale image as RGB base
+    if len(gray_image.shape) == 2:
+        base = cv2.cvtColor(gray_image, cv2.COLOR_GRAY2RGB)
+    else:
+        base = gray_image.copy()
+    
+    # The edge_image already contains the gray background with orange edges overlaid
+    # The defect_image already contains the gray background with colored point defects
+    
+    # We need to extract just the colored pixels (defects/edges) from each image
+    
+    # For edge detection: edge_image has orange color (203, 112, 51) where edges are
+    # Create a mask for orange pixels
+    if len(edge_image.shape) == 3:
+        # Find pixels that are NOT grayscale (indicating they are colored edges)
+        edge_mask = np.logical_or(
+            edge_image[:,:,0] != edge_image[:,:,1],
+            edge_image[:,:,1] != edge_image[:,:,2]
+        )
+    else:
+        edge_mask = edge_image > 0
+    
+    # For point defects: defect_image has colors (red, blue, green) where defects are
+    if len(defect_image.shape) == 3:
+        # Find pixels that are NOT grayscale (indicating they are colored defects)
+        defect_mask = np.logical_or(
+            defect_image[:,:,0] != defect_image[:,:,1],
+            defect_image[:,:,1] != defect_image[:,:,2]
+        )
+    else:
+        defect_mask = defect_image > 0
+    
+    # Apply overlays
+    result = base.copy()
+    
+    # First apply edge overlay (extended defects)
+    if len(edge_image.shape) == 3 and np.any(edge_mask):
+        result[edge_mask] = edge_image[edge_mask]
+    
+    # Then apply defect overlay (point defects) - this overwrites edges if they overlap
+    if len(defect_image.shape) == 3 and np.any(defect_mask):
+        result[defect_mask] = defect_image[defect_mask]
+    
+    return result
+
+
+def create_analysis_report(sample_name: str, image_data: ImageData,
+                          edge_image: np.ndarray, edge_coverage: float,
+                          defect_image: np.ndarray, blob_counts: List[int]) -> None:
+    """Create visualization with defects overlay on original image"""
+    
+    # Create the combined overlay
+    overlay = create_combined_overlay(image_data.gray_image, edge_image, defect_image)
+    
+    # Create figure with two subplots for comparison
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+    
+    # Original image
+    ax1.imshow(image_data.gray_image, cmap='gray')
+    ax1.set_title(f"{sample_name} - Original", fontsize=12, fontweight='bold')
+    ax1.axis('off')
+    add_scale_bar(ax1, image_data.nm_per_pixel)
+    
+    # Overlay with defects
+    ax2.imshow(overlay)
+    total_defects = sum(blob_counts)
+    title = (f"{sample_name} - Defect Analysis\n"
+             f"Point Defects: {total_defects} (R:{blob_counts[0] if len(blob_counts)>0 else 0}, "
+             f"B:{blob_counts[1] if len(blob_counts)>1 else 0}, "
+             f"G:{blob_counts[2] if len(blob_counts)>2 else 0}) | "
+             f"Extended Defects: {edge_coverage:.1f}% coverage")
+    ax2.set_title(title, fontsize=12, fontweight='bold')
+    ax2.axis('off')
+    add_scale_bar(ax2, image_data.nm_per_pixel)
+    
+    # Add legend
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor=(203/255, 112/255, 51/255), label='Extended Defects (Edges)'),
+        Patch(facecolor='red', label='Point Defects (Band 1)'),
+        Patch(facecolor='blue', label='Point Defects (Band 2)'),
+        Patch(facecolor='green', label='Point Defects (Band 3)')
+    ]
+    ax2.legend(handles=legend_elements, loc='upper right', fontsize=9, framealpha=0.9)
+    
+    plt.tight_layout()
+    plt.show()
+
+
+# Alternative: If the above doesn't work, here's a more direct approach
+def create_combined_overlay_v2(image_data: ImageData, edges: np.ndarray, 
+                              point_defect_contours: List[List[np.ndarray]], 
+                              defect_colors: List[Tuple[int, int, int]] = None) -> np.ndarray:
+    """
+    Direct method to create overlay from raw detection results
+    
+    Args:
+        image_data: Original image data
+        edges: Binary edge mask from Canny detection
+        point_defect_contours: List of contour lists for each band
+        defect_colors: Colors for each band of point defects
+    """
+    if defect_colors is None:
+        defect_colors = [(255, 0, 0), (0, 0, 255), (0, 255, 0)]  # Red, Blue, Green
+    
+    # Start with grayscale as RGB
+    result = cv2.cvtColor(image_data.gray_image, cv2.COLOR_GRAY2RGB)
+    
+    # Draw extended defects (edges) in orange
+    edge_color = (203, 112, 51)  # Orange
+    result[edges > 0] = edge_color
+    
+    # Draw point defects
+    for band_idx, contours in enumerate(point_defect_contours):
+        color = defect_colors[band_idx % len(defect_colors)]
+        for contour in contours:
+            cv2.drawContours(result, [contour], -1, color, 2)  # Thickness of 2 for visibility
+    
+    return result
+
 if __name__ == "__main__":
     # Define sample paths
-    sample_paths = []
+    sample_paths = [
+        "../MoS2_1ML.xyz","../MoS2_3ML.xyz"
+    ]
     
     # Process all samples
     results = process_multiple_samples(sample_paths)
