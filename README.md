@@ -1,7 +1,7 @@
 # Argus
 
-`Argus.py` is a Python script for processing `.xyz` microscopy data.  
-It detects point and extended defects and generates plots.
+`Argus.py` is a Python script for processing `.xyz` C-AFM data.  
+It detects point and extended defects.
 
 ---
 
